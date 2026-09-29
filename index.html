@@ -1,0 +1,489 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <title>Lotto — חיזוי סדרות (פרימיום)</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <!-- Bootstrap + icons -->
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css" rel="stylesheet">
+  <link href="style.css" rel="stylesheet">
+  <!-- Chart & PapaParse -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+</head>
+<body>
+  <div class="container">
+    <header class="header mb-3">
+      <div class="logo">LP</div>
+      <div>
+        <h1>🎯 Lotto — חיזוי סדרות (6+נוסף)</h1>
+        <p class="muted">ניתוח כל הסדרות, מיון על פי שכיחות/טריות/סיכוי ויצירת ניבויים מדורגים</p>
+      </div>
+    </header>
+
+    <!-- IMPORT + CONTROLS -->
+    <div class="row g-3 mb-3">
+      <div class="col-md-6">
+        <div class="card p-3">
+          <h5>ייבוא / ניהול</h5>
+          <div class="small-muted mb-2">טען קובץ CSV (פורמט דינמי) או הזן ידנית סדרה</div>
+          <div class="d-flex gap-2 mb-2">
+            <input id="csvFile" type="file" accept=".csv" class="form-control form-control-sm">
+            <button id="importCsvBtn" class="btn btn-primary btn-sm">ייבא CSV</button>
+            <button id="clearBtn" class="btn btn-danger btn-sm ms-auto">איפוס מאגר</button>
+          </div>
+
+          <form id="manualForm" class="row g-2 align-items-center">
+            <div class="col-12 small-muted">הזן 6 מספרים מופרדים בפסיק + מספר נוסף + תאריך</div>
+            <div class="col-md-6"><input id="seriesNumbers" class="form-control form-control-sm" placeholder="לדוגמה: 1,5,12,20,25,30" required></div>
+            <div class="col-md-2"><input id="seriesExtra" class="form-control form-control-sm" type="number" min="1" max="7" placeholder="נוסף" required></div>
+            <div class="col-md-3"><input id="seriesDate" class="form-control form-control-sm" type="date" required></div>
+            <div class="col-md-1 d-grid"><button class="btn btn-success btn-sm">הוסף</button></div>
+          </form>
+        </div>
+      </div>
+
+      <div class="col-md-6">
+        <div class="card p-3">
+          <h5>יצירת ניבויים</h5>
+          <div class="small-muted mb-2">בחר כמה ניבויים להפיק (כולל סדרות קיימות וחדשות)</div>
+          <div class="d-flex gap-2 align-items-center mb-2">
+            <label class="me-2 muted">כמות ניבויים:</label>
+            <input id="predictCount" type="number" class="form-control form-control-sm w-auto" value="20" min="1" max="500">
+            <label class="ms-3 me-2 muted">שיטת דירוג:</label>
+            <select id="rankMode" class="form-select form-select-sm w-auto">
+              <option value="combined">קומבינציה: שכיחות+טריות+דמיון</option>
+              <option value="freq">שכיחות בלבד</option>
+              <option value="recency">טריות בלבד</option>
+            </select>
+            <button id="generateBtn" class="btn btn-warning btn-sm ms-3">🔮 הפק ניבויים</button>
+          </div>
+          <div class="small-muted">תוצאות יופיעו מטה — סדרות שכבר הופיעו בעבר יקבלו עדיפות.</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- TABLE OF SERIES -->
+    <div class="card mb-3 p-3">
+      <div class="d-flex justify-content-between align-items-center mb-2">
+        <h5>טבלת סדרות שזכו</h5>
+        <div>
+          <label class="me-2 small-muted">מיין לפי:</label>
+          <select id="sortSelect" class="form-select form-select-sm w-auto d-inline-block">
+            <option value="count">שכיחות (desc)</option>
+            <option value="pct">אחוז הופעה (desc)</option>
+            <option value="last">תאריך אחרון (desc)</option>
+            <option value="score">ציון סיכוי (desc)</option>
+          </select>
+          <button id="exportCsvBtn" class="btn btn-outline-light btn-sm ms-2"><i class="bi bi-download"></i> יצא CSV</button>
+        </div>
+      </div>
+
+      <div style="max-height:340px; overflow:auto;">
+        <table id="seriesTable" class="table table-hover table-sm text-white mb-0">
+          <thead>
+            <tr><th>#</th><th>סדרה (6)</th><th>נוסף</th><th>אופ</th><th>הופעות</th><th>%</th><th>תאריך אחרון</th><th>ציון</th><th>פעולות</th></tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- TOP SERIES CHART -->
+    <div class="card mb-3 p-3">
+      <h5>טופ 10 סדרות</h5>
+      <canvas id="topSeriesChart" height="120"></canvas>
+    </div>
+
+    <!-- PREDICTIONS -->
+    <div class="card mb-3 p-3">
+      <h5>ניבויים מדורגים</h5>
+      <div id="predictionsArea" class="mt-2"></div>
+    </div>
+  </div>
+
+<script>
+/* lotto-series: analyze complete series (6 + extra) and produce ranked predictions.
+   Storage key & basic data model:
+   dataset = [{ date:'YYYY-MM-DD', nums:[6 numbers sorted asc], extra: x }]
+*/
+
+const STORAGE_KEY = 'lotto_series_v1';
+let dataset = [];
+
+/* DOM */
+const csvFile = document.getElementById('csvFile');
+const importCsvBtn = document.getElementById('importCsvBtn');
+const clearBtn = document.getElementById('clearBtn');
+const manualForm = document.getElementById('manualForm');
+const seriesTableBody = document.querySelector('#seriesTable tbody');
+const sortSelect = document.getElementById('sortSelect');
+const exportCsvBtn = document.getElementById('exportCsvBtn');
+const generateBtn = document.getElementById('generateBtn');
+const predictCountInput = document.getElementById('predictCount');
+const rankModeSelect = document.getElementById('rankMode');
+const predictionsArea = document.getElementById('predictionsArea');
+const topSeriesChartEl = document.getElementById('topSeriesChart');
+let topChart = null;
+
+/* load/save */
+function loadData(){ const s = localStorage.getItem(STORAGE_KEY); dataset = s ? JSON.parse(s) : []; }
+function saveData(){ localStorage.setItem(STORAGE_KEY, JSON.stringify(dataset)); renderAll(); }
+
+/* helpers */
+function normalizeDateString(s){
+  if(!s) return s;
+  s = String(s).trim();
+  if(/^\d{4}-\d{1,2}-\d{1,2}$/.test(s)) return s;
+  const m = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})$/);
+  if(m){ let d=m[1].padStart(2,'0'), mo=m[2].padStart(2,'0'), y=m[3]; if(y.length===2) y='20'+y; return `${y}-${mo}-${d}`; }
+  const dt = new Date(s); if(!isNaN(dt)) return `${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}-${String(dt.getDate()).padStart(2,'0')}`;
+  return s;
+}
+function tupleKey(nums, extra){ return nums.slice().sort((a,b)=>a-b).join('-') + '|' + extra; }
+function parseNumsString(str){
+  const parts = String(str).split(/[\s,;]+/).map(x=>Number(x)).filter(n=>Number.isInteger(n)&&n>=1&&n<=37);
+  if(parts.length !== 6) return null;
+  const uniq = Array.from(new Set(parts));
+  if(uniq.length !== 6) return null;
+  return parts.sort((a,b)=>a-b);
+}
+
+/* aggregate series stats: counts, lastDate */
+function computeSeriesStats(){
+  const map = new Map();
+  dataset.forEach((row, idx)=>{
+    const key = tupleKey(row.nums, row.extra);
+    const rec = map.get(key) || { nums: row.nums.slice(), extra: row.extra, count:0, lastIdx:-1, lastDate: null };
+    rec.count += 1;
+    // use index as chronological position (we assume dataset appended chronologically; if CSV not chronological, lastDate used)
+    rec.lastIdx = Math.max(rec.lastIdx, idx);
+    if(!rec.lastDate || (row.date && row.date > rec.lastDate)) rec.lastDate = row.date;
+    map.set(key, rec);
+  });
+  return Array.from(map.values());
+}
+
+/* compute per-number freq used for synthetic scoring (optional) */
+function computeNumberFreq(){
+  const freq = Array(38).fill(0);
+  dataset.forEach(r=> r.nums.forEach(n=> freq[n]++));
+  return freq;
+}
+
+/* scoring function for a series
+   Components:
+   - freqScore: based on exact-series frequency (higher if repeated)
+   - recencyScore: if series appeared recently (use last date index or lastDate)
+   - similarityScore: how similar this series is to many repeated series (sum of overlaps)
+   For series that existed in history we use count/recency primarily.
+   For synthetic combos (never occurred), score is based on per-number probabilities + similarity to repeated series.
+*/
+function scoreSeriesObj(obj, statsByKey, numberFreq, totalDraws, mode='combined'){
+  // obj: { nums: [..], extra: x }  OR stats entry {nums,extra,count,lastIdx,lastDate}
+  // statsByKey: Map of existing series keyed by key -> stats
+  const key = tupleKey(obj.nums, obj.extra);
+  const stat = statsByKey.get(key) || null;
+
+  // freqScore (existing exact-series)
+  const freqScore = stat ? stat.count : 0; // raw count
+
+  // recency: if stat exists, calculate recency based on lastDate or lastIdx
+  let recencyScore = 0;
+  if(stat && stat.lastDate){
+    // compute recency as 1/(distance in draws +1) using lastIdx if dataset order
+    // We approximate distance = totalDraws - lastIdx
+    const lastIdx = stat.lastIdx != null ? stat.lastIdx : -1;
+    if(lastIdx >= 0) recencyScore = 1 / ( (totalDraws - 1 - lastIdx) + 1 );
+    else recencyScore = 0.001;
+  }
+
+  // similarityScore: sum of overlaps with frequent existing series (for never-seen combos)
+  // We compute overlapCount = max number of shared numbers between this obj and each existing series, weighted by that series' count.
+  let similarityScore = 0;
+  if(statsByKey && statsByKey.size > 0){
+    for(const s of statsByKey.values()){
+      const common = obj.nums.filter(n => s.nums.includes(n)).length + (obj.extra === s.extra ? 1 : 0);
+      if(common > 0){
+        similarityScore += (common/7) * s.count; // normalized by 7 (6+extra), weighted by count
+      }
+    }
+  }
+
+  // number-based score: for synthetic combos, use per-number freq
+  let numberScore = 0;
+  if(numberFreq){
+    obj.nums.forEach(n=> numberScore += (numberFreq[n] || 0) );
+    numberScore = numberScore / (numberFreq.reduce((a,b)=>a+b,0) || 1); // normalize roughly
+  }
+
+  // combine according to mode
+  let final = 0;
+  if(mode === 'freq'){ final = freqScore + 0.0001*recencyScore + 0.00001*similarityScore; }
+  else if(mode === 'recency'){ final = recencyScore + 0.01*freqScore + 0.001*similarityScore; }
+  else { // combined
+    final = (freqScore * 3) + (recencyScore * 2) + (similarityScore * 0.5) + (numberScore * 0.5);
+  }
+  return { final, components: { freqScore, recencyScore, similarityScore, numberScore } };
+}
+
+/* render series table */
+function renderSeriesTable(){
+  const stats = computeSeriesStats();
+  const statsByKey = new Map(); stats.forEach(s => statsByKey.set(tupleKey(s.nums,s.extra), s));
+  const totalDraws = dataset.length;
+  // compute scores
+  const numberFreq = computeNumberFreq();
+  const rankMode = rankModeSelect.value; // note: used in scoring of predictions; here we will compute a 'score' for display as combined
+  const rows = stats.map(s=>{
+    const sc = scoreSeriesObj(s, statsByKey, numberFreq, totalDraws, 'combined');
+    const pct = totalDraws>0 ? (s.count / totalDraws * 100) : 0;
+    return { ...s, pct, score: sc.final.toFixed(4) };
+  });
+
+  // sort according to sortSelect
+  const sortBy = sortSelect.value;
+  rows.sort((a,b)=>{
+    if(sortBy==='count') return b.count - a.count;
+    if(sortBy==='pct') return b.pct - a.pct;
+    if(sortBy==='last') return (b.lastDate || '') > (a.lastDate || '') ? 1 : -1;
+    if(sortBy==='score') return parseFloat(b.score) - parseFloat(a.score);
+    return 0;
+  });
+
+  seriesTableBody.innerHTML = '';
+  rows.forEach((r, idx)=>{
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>${idx+1}</td>
+      <td>${r.nums.join(', ')}</td>
+      <td>${r.extra}</td>
+      <td>${r.count>1 ? '<span class="small-muted">חזרה</span>' : '<span class="small-muted">חדשה</span>'}</td>
+      <td>${r.count}</td>
+      <td>${r.pct.toFixed(3)}%</td>
+      <td>${r.lastDate || '-'}</td>
+      <td>${r.score}</td>
+      <td><button class="btn btn-sm btn-outline-danger" onclick="deleteSeries('${tupleKey(r.nums,r.extra)}')"><i class="bi bi-trash"></i></button></td>`;
+    seriesTableBody.appendChild(tr);
+  });
+
+  // render top chart
+  renderTopChart(rows.slice(0,10));
+}
+
+/* delete series by key (removes all matching entries from dataset) */
+function deleteSeries(key){
+  if(!confirm('למחוק את כל ההופעות של סדרה זו?')) return;
+  const [numsStr, extra] = key.split('|');
+  const nums = numsStr.split('-').map(Number);
+  dataset = dataset.filter(d => !(arraysEqual(d.nums.sort((a,b)=>a-b), nums) && Number(d.extra) === Number(extra)));
+  saveData();
+}
+
+/* utility */
+function arraysEqual(a,b){ if(a.length!==b.length) return false; for(let i=0;i<a.length;i++) if(a[i]!==b[i]) return false; return true; }
+
+/* top chart */
+function renderTopChart(topRows){
+  const labels = topRows.map(r => r.nums.join(',') + ' +' + r.extra);
+  const data = topRows.map(r => r.count);
+  const ctx = topSeriesChartEl.getContext('2d');
+  if(topChart) topChart.destroy();
+  topChart = new Chart(ctx, {
+    type:'bar',
+    data: { labels, datasets: [{ label:'הופעות', data, backgroundColor:'rgba(125,211,252,0.9)' }]},
+    options: { plugins:{legend:{display:false}}, indexAxis: 'y'}
+  });
+}
+
+/* generate predictions:
+   algorithm:
+   1) compute stats & numberFreq
+   2) Create candidate pool:
+      a) all existing series (exact) with their score
+      b) synthetic combos generated from topM numbers (M=12 default). Create combinations C(M,6) (cap to reasonable number)
+         - attach extras from topE extras (E=3)
+   3) score each candidate using scoreSeriesObj with mode ranking
+   4) sort descending and return top K unique candidates
+*/
+function generatePredictions(K=50, rankMode='combined'){
+  const stats = computeSeriesStats();
+  const statsByKey = new Map(); stats.forEach(s => statsByKey.set(tupleKey(s.nums,s.extra), s));
+  const totalDraws = dataset.length;
+  const numberFreq = computeNumberFreq();
+
+  // candidates map
+  const candMap = new Map();
+
+  // a) add existing series
+  stats.forEach(s => {
+    const key = tupleKey(s.nums, s.extra);
+    const sc = scoreSeriesObj(s, statsByKey, numberFreq, totalDraws, rankMode);
+    candMap.set(key, { nums: s.nums.slice(), extra: s.extra, score: sc.final, components: sc.components, existed: true });
+  });
+
+  // b) synthetic combos from topM numbers
+  // choose topM numbers by freq+recency hybrid
+  const N = 12; // M = top numbers to combine from (12 -> C(12,6)=924 combos)
+  // Build per-number score: freqNorm + recencyNorm
+  const perNum = Array(38).fill(0);
+  const { freqNorm, recNorm } = (function(){ // compute local normalized freq & rec
+    const freq = Array(38).fill(0), lastPos = Array(38).fill(-1);
+    dataset.forEach((row,idx)=> row.nums.forEach(n=>{ freq[n]++; lastPos[n]=idx; }));
+    const maxF = Math.max(...freq);
+    const Ndraws = dataset.length;
+    const freqN = Array(38).fill(0), recN = Array(38).fill(0);
+    for(let i=1;i<=37;i++) freqN[i] = maxF>0 ? freq[i]/maxF : 0;
+    const recRaw = Array(38).fill(0);
+    for(let i=1;i<=37;i++){ recRaw[i] = lastPos[i]===-1 ? 0 : 1/((Ndraws-1)-lastPos[i]+1); }
+    const maxR = Math.max(...recRaw);
+    for(let i=1;i<=37;i++) recN[i] = maxR>0 ? recRaw[i]/maxR : 0;
+    return { freqNorm:freqN, recNorm:recN };
+  })();
+  for(let i=1;i<=37;i++) perNum[i] = 0.7 * (freqNorm ? freqNorm[i] : 0) + 0.3 * (recNorm ? recNorm[i] : 0);
+
+  // build sorted numbers by perNum
+  const numsSorted = [];
+  for(let i=1;i<=37;i++) numsSorted.push({n:i,score:perNum[i]});
+  numsSorted.sort((a,b)=>b.score - a.score);
+  const topNums = numsSorted.slice(0, N).map(x=>x.n);
+
+  // top extras
+  const extraFreq = Array(8).fill(0);
+  dataset.forEach(r => { if(r.extra>=1 && r.extra<=7) extraFreq[r.extra]++; });
+  const extraSorted = [];
+  for(let i=1;i<=7;i++) extraSorted.push({n:i, f: extraFreq[i]});
+  extraSorted.sort((a,b)=>b.f - a.f);
+  const topExtras = extraSorted.slice(0, Math.min(3, extraSorted.length)).map(x=>x.n);
+  if(topExtras.length===0) topExtras.push(1,2,3);
+
+  // generate combinations C(topNums,6)
+  // careful: limit: if N too big => many combos; with N=12 => 924 combos * up to 3 extras = ~2772 candidates manageable.
+  function combinations(arr, k){
+    const res=[];
+    const comb = (start, curr)=>{
+      if(curr.length===k){ res.push(curr.slice()); return; }
+      for(let i=start;i<arr.length;i++){ curr.push(arr[i]); comb(i+1, curr); curr.pop(); }
+    };
+    comb(0, []);
+    return res;
+  }
+  const combos = combinations(topNums, 6);
+  // add combos with extras
+  combos.forEach(c => {
+    topExtras.forEach(ex => {
+      const key = tupleKey(c, ex);
+      if(candMap.has(key)) return;
+      // compute score: treat as synthetic obj
+      const sc = scoreSeriesObj({nums:c, extra:ex}, statsByKey, numberFreq, totalDraws, rankMode);
+      candMap.set(key, { nums: c.slice(), extra: ex, score: sc.final, components: sc.components, existed: false });
+    });
+  });
+
+  // convert to array and sort
+  const candidates = Array.from(candMap.values());
+  candidates.sort((a,b)=>b.score - a.score);
+
+  // return top K
+  return candidates.slice(0, K);
+}
+
+/* Render predictions */
+function renderPredictions(list){
+  predictionsArea.innerHTML = '';
+  if(!list || list.length===0){ predictionsArea.innerHTML = '<div class="small-muted">לא נמצאו ניבויים — הוסף נתונים ראשית</div>'; return; }
+  list.forEach((c, idx)=>{
+    const div = document.createElement('div');
+    div.className = 'mb-2';
+    const header = `<strong>ניבוי ${idx+1}:</strong> `;
+    const seriesHtml = c.nums.map(n=>`<span class="chip">${n}</span>`).join('') + `<span class="chip" style="background:#7dd3fc;color:#000;margin-left:8px">${c.extra}</span>`;
+    const scoreText = `<span class="small-muted" style="margin-right:8px">ציון: ${Number(c.score).toFixed(4)} ${c.existed ? '<span style="color:var(--accent-gold);margin-right:6px">(קיים)</span>' : ''}</span>`;
+    div.innerHTML = `${header} ${seriesHtml} ${scoreText}`;
+    predictionsArea.appendChild(div);
+  });
+}
+
+/* render all (table & chart) */
+function renderAll(){
+  renderSeriesTable();
+}
+
+/* event handlers */
+manualForm.addEventListener('submit', (e)=>{
+  e.preventDefault();
+  const numsStr = document.getElementById('seriesNumbers').value;
+  const nums = parseNumsString(numsStr);
+  const extra = Number(document.getElementById('seriesExtra').value);
+  const date = normalizeDateString(document.getElementById('seriesDate').value);
+  if(!nums){ alert('אנא הכנס 6 מספרים חוקיים (1-37), בלי כפילויות'); return; }
+  if(!Number.isInteger(extra) || extra < 1 || extra > 7){ alert('המספר הנוסף חייב להיות 1–7'); return; }
+  dataset.push({ date, nums, extra });
+  ['seriesNumbers','seriesExtra','seriesDate'].forEach(id=>document.getElementById(id).value='');
+  saveData();
+});
+
+importCsvBtn.addEventListener('click', ()=> csvFile.click());
+csvFile.addEventListener('change', (ev)=>{
+  const f = ev.target.files[0]; if(!f) return;
+  Papa.parse(f, { skipEmptyLines:true, complete: (res)=>{
+    if(!res.data || res.data.length===0){ alert('קובץ ריק'); return; }
+    let added = 0;
+    res.data.forEach(row=>{
+      const arr = Array.isArray(row) ? row.map(x=>String(x).trim()) : Object.values(row).map(x=>String(x).trim());
+      // try patterns:
+      // pattern A: date, n1..n6, extra
+      if(arr.length>=8){
+        const d = arr[0]; const nums = arr.slice(1,7).map(Number); const extra = Number(arr[7]);
+        if(nums.every(n=>Number.isInteger(n) && n>=1 && n<=37) && Number.isInteger(extra) && extra>=1 && extra<=7){
+          dataset.push({ date: normalizeDateString(d), nums: nums.sort((a,b)=>a-b), extra });
+          added++; return;
+        }
+      }
+      // pattern B: "n,n,n,n,n,n", extra, date
+      if(arr.length>=3){
+        const numsStr = arr[0].replace(/"/g,'');
+        const parts = numsStr.split(/[\s,]+/).map(Number).filter(n=>Number.isInteger(n));
+        const extra = Number(arr[1]); const date = arr[2];
+        if(parts.length===6 && Number.isInteger(extra) && extra>=1 && extra<=7){
+          dataset.push({ date: normalizeDateString(date), nums: parts.sort((a,b)=>a-b), extra });
+          added++; return;
+        }
+      }
+    });
+    saveData();
+    alert(`יובאו ${added} שורות מ-CSV`);
+  }, error: ()=> alert('שגיאה בקריאת CSV')});
+});
+
+clearBtn.addEventListener('click', ()=> { if(!confirm('למחוק את כל המאגר?')) return; dataset=[]; saveData(); });
+
+sortSelect.addEventListener('change', ()=> renderSeriesTable());
+
+exportCsvBtn.addEventListener('click', ()=>{
+  if(dataset.length===0){ alert('אין נתונים'); return; }
+  let csv = 'date,n1,n2,n3,n4,n5,n6,extra\n';
+  dataset.forEach(r => csv += `${r.date},${r.nums.join(',')},${r.extra}\n`);
+  const blob = new Blob([csv], { type:'text/csv' });
+  const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = 'series_export.csv'; a.click();
+  URL.revokeObjectURL(url);
+});
+
+/* generate button */
+generateBtn.addEventListener('click', ()=>{
+  const K = Math.min(500, Math.max(1, Number(predictCountInput.value) || 20));
+  const mode = rankModeSelect.value;
+  const preds = generatePredictions(K, mode);
+  renderPredictions(preds);
+});
+
+/* init */
+(function init(){ loadData(); renderAll(); })();
+
+</script>
+
+<!-- Bootstrap JS -->
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>
+
+  
